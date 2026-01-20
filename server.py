@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 import aiofiles
 import json
 import io
@@ -37,9 +37,18 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
 
 # LLM Configuration
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 HEYGEN_API_KEY = os.environ.get('HEYGEN_API_KEY', '')
 ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
+
+# Initialize OpenAI client
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        logger.info("✅ OpenAI client initialized")
+    except Exception as e:
+        logger.error(f"❌ Error initializing OpenAI: {e}")
 
 # Initialize ElevenLabs client
 elevenlabs_client = None
@@ -147,13 +156,33 @@ class Document(BaseModel):
     content: str
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# Helper function
+# Helper functions
 def prepare_for_mongo(data: dict) -> dict:
     """Convert datetime objects to ISO strings for MongoDB"""
     for key, value in data.items():
         if isinstance(value, datetime):
             data[key] = value.isoformat()
     return data
+
+async def get_ai_response(system_prompt: str, user_message: str) -> str:
+    """Generate AI response using OpenAI"""
+    if not openai_client:
+        raise HTTPException(status_code=503, detail="OpenAI not configured")
+    
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error generating AI response: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating AI response: {str(e)}")
 
 # Routes
 @api_router.get("/")
@@ -245,14 +274,7 @@ Información legal disponible:
 Responde de manera profesional, clara y precisa. Si no tienes información específica, 
 indica que el usuario debe consultar con el equipo legal."""
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=msg.conversation_id,
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=msg.content)
-        ai_response = await chat.send_message(user_message)
+        ai_response = await get_ai_response(system_prompt, msg.content)
         
         # Create assistant message
         assistant_msg = Message(
@@ -485,8 +507,8 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not elevenlabs_client:
             raise HTTPException(status_code=503, detail="ElevenLabs not configured")
         
-        if not EMERGENT_LLM_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
+        if not OPENAI_API_KEY:
+            raise HTTPException(status_code=503, detail="OpenAI not configured")
         
         # Step 1: Transcribe audio to text using ElevenLabs STT
         logger.info("📝 Transcribing audio...")
@@ -516,14 +538,7 @@ Responde de manera profesional, clara, concisa y precisa. Mantén las respuestas
 ya que serán convertidas a voz. Si no tienes información específica, indica que el usuario debe consultar 
 con el equipo legal."""
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id="voice_chat_" + str(uuid.uuid4()),
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=transcribed_text)
-        ai_response = await chat.send_message(user_message)
+        ai_response = await get_ai_response(system_prompt, transcribed_text)
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
         
         # Step 3: Convert AI response to speech
@@ -572,8 +587,8 @@ async def text_chat(request: dict):
     3. Convert response to speech using ElevenLabs TTS (optional)
     """
     try:
-        if not EMERGENT_LLM_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
+        if not OPENAI_API_KEY:
+            raise HTTPException(status_code=503, detail="OpenAI not configured")
         
         text = request.get('text', '').strip()
         if not text:
@@ -591,14 +606,7 @@ Información legal disponible:
 Responde de manera profesional, clara y precisa. Si no tienes información específica, 
 indica que el usuario debe consultar con el equipo legal."""
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id="text_chat_" + str(uuid.uuid4()),
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=text)
-        ai_response = await chat.send_message(user_message)
+        ai_response = await get_ai_response(system_prompt, text)
         logger.info(f"✅ AI Response generated")
         
         # Optionally convert to speech if ElevenLabs is available
@@ -659,8 +667,8 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
         if not elevenlabs_client:
             raise HTTPException(status_code=503, detail="ElevenLabs not configured")
         
-        if not EMERGENT_LLM_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
+        if not OPENAI_API_KEY:
+            raise HTTPException(status_code=503, detail="OpenAI not configured")
         
         logger.info(f"🎙️ Processing voice with agent: {agent_id}")
         
@@ -711,14 +719,7 @@ Información legal disponible:
 Responde de manera profesional, clara, concisa y amigable como lo haría el Dr. Prados.
 Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a voz."""
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"agent_{agent_id}_{uuid.uuid4()}",
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=transcribed_text)
-        ai_response = await chat.send_message(user_message)
+        ai_response = await get_ai_response(system_prompt, transcribed_text)
         logger.info(f"✅ AI Response generated")
         
         # Step 4: Convert to speech using agent's voice
@@ -785,14 +786,7 @@ Información legal:
 
 Responde de manera profesional y clara."""
             
-            chat = LlmChat(
-                api_key=EMERGENT_LLM_KEY,
-                session_id=conversation_id,
-                system_message=system_prompt
-            ).with_model("openai", "gpt-4o")
-            
-            user_message = UserMessage(text=message_data['content'])
-            ai_response = await chat.send_message(user_message)
+            ai_response = await get_ai_response(system_prompt, message_data['content'])
             
             # Create assistant message
             assistant_msg = Message(
