@@ -51,8 +51,9 @@ app = FastAPI()
 # CORS Configuration - Configuración directa y robusta
 # Dominios permitidos (hardcodeados como fallback)
 ALLOWED_ORIGINS = [
-    "https://leqbotdev.pradosdeparaiso.com.pe",
-    "https://www.leqbotdev.pradosdeparaiso.com.pe",
+    "https://legbotdev.pradosdeparaiso.com.pe",  # CORREGIDO: legbotdev (con 'g')
+    "https://www.legbotdev.pradosdeparaiso.com.pe",
+    "https://leqbotdev.pradosdeparaiso.com.pe",  # Por si acaso también existe
     "http://localhost:3000",
     "http://localhost:3001",
 ]
