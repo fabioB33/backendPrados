@@ -120,6 +120,16 @@ async def get_ai_response(system_prompt: str, user_message: str) -> str:
 async def root():
     return {"message": "Prados de Paraíso Legal Hub API"}
 
+@api_router.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    cors_origins = os.environ.get('CORS_ORIGINS', '*')
+    return {
+        "status": "ok",
+        "cors_origins": cors_origins,
+        "backend_url": "backendprados.onrender.com"
+    }
+
 # Text-to-Speech with ElevenLabs
 @api_router.post("/tts")
 async def text_to_speech(request: dict):
@@ -428,10 +438,18 @@ Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a v
 
 app.include_router(api_router)
 
+# CORS Configuration
+cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
+# Limpiar espacios y dividir por comas
+cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
+
+logger.info(f"🌐 CORS Origins configurados: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
