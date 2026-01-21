@@ -127,8 +127,16 @@ async def health_check():
     return {
         "status": "ok",
         "cors_origins": cors_origins,
-        "backend_url": "backendprados.onrender.com"
+        "cors_origins_parsed": [origin.strip() for origin in cors_origins.split(',') if origin.strip()],
+        "backend_url": "backendprados.onrender.com",
+        "openai_configured": bool(OPENAI_API_KEY),
+        "elevenlabs_configured": bool(ELEVENLABS_API_KEY)
     }
+
+@api_router.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    """Handle OPTIONS requests for CORS preflight"""
+    return {"message": "OK"}
 
 # Text-to-Speech with ElevenLabs
 @api_router.post("/tts")
@@ -443,13 +451,19 @@ cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
 # Limpiar espacios y dividir por comas
 cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
 
+# Si está vacío o es '*', permitir todos (solo para desarrollo)
+if not cors_origins or cors_origins == ['*']:
+    cors_origins = ['*']
+    logger.warning("⚠️ CORS configurado para permitir todos los orígenes (*)")
+
 logger.info(f"🌐 CORS Origins configurados: {cors_origins}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=cors_origins,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=3600,
 )
