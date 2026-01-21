@@ -47,6 +47,39 @@ if ELEVENLABS_API_KEY:
         logger.error(f"❌ Error initializing ElevenLabs: {e}")
 
 app = FastAPI()
+
+# CORS Configuration - Configuración directa y robusta
+# Dominios permitidos (hardcodeados como fallback)
+ALLOWED_ORIGINS = [
+    "https://leqbotdev.pradosdeparaiso.com.pe",
+    "https://www.leqbotdev.pradosdeparaiso.com.pe",
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
+# Obtener de variable de entorno si existe
+cors_origins_str = os.environ.get('CORS_ORIGINS', '')
+if cors_origins_str and cors_origins_str != '*':
+    # Parsear variable de entorno
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
+    # Combinar con los hardcodeados
+    cors_origins = list(set(cors_origins + ALLOWED_ORIGINS))
+else:
+    cors_origins = ALLOWED_ORIGINS
+
+logger.info(f"🌐 CORS Origins configurados: {cors_origins}")
+
+# Agregar CORS middleware INMEDIATAMENTE después de crear la app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
+)
+
 api_router = APIRouter(prefix="/api")
 
 # Información legal precargada
@@ -445,25 +478,3 @@ Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a v
 
 
 app.include_router(api_router)
-
-# CORS Configuration
-cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
-# Limpiar espacios y dividir por comas
-cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
-
-# Si está vacío o es '*', permitir todos (solo para desarrollo)
-if not cors_origins or cors_origins == ['*']:
-    cors_origins = ['*']
-    logger.warning("⚠️ CORS configurado para permitir todos los orígenes (*)")
-
-logger.info(f"🌐 CORS Origins configurados: {cors_origins}")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=cors_origins,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=3600,
-)
