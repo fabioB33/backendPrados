@@ -370,7 +370,10 @@ indica que el usuario debe consultar con el equipo legal."""
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         logger.error(f"❌ Error in text chat: {str(e)}")
+        logger.error(f"📋 Traceback: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
 
 # Voice Agent Endpoint (using ElevenLabs Agent's voice and knowledge)
@@ -474,7 +477,10 @@ Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a v
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         logger.error(f"❌ Error in voice agent: {str(e)}")
+        logger.error(f"📋 Traceback: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
 
 
