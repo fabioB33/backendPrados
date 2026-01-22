@@ -170,7 +170,16 @@ async def health_check():
 @api_router.options("/{full_path:path}")
 async def options_handler(full_path: str):
     """Handle OPTIONS requests for CORS preflight"""
-    return {"message": "OK"}
+    from fastapi.responses import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
 
 # Text-to-Speech with ElevenLabs
 @api_router.post("/tts")
@@ -398,16 +407,31 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
         
         # Step 1: Transcribe audio
         audio_content = await audio.read()
-        transcription_response = elevenlabs_client.speech_to_text.convert(
-            file=io.BytesIO(audio_content),
-            model_id="scribe_v1"
-        )
         
-        transcribed_text = transcription_response.text if hasattr(transcription_response, 'text') else str(transcription_response)
-        logger.info(f"✅ Transcribed: {transcribed_text}")
+        # Verificar que el audio no esté vacío
+        if len(audio_content) < 1000:  # Mínimo ~1KB
+            raise HTTPException(status_code=400, detail="El audio es demasiado corto. Por favor, graba al menos 1 segundo de audio.")
         
-        if not transcribed_text or len(transcribed_text.strip()) == 0:
-            raise HTTPException(status_code=400, detail="No se pudo transcribir el audio.")
+        try:
+            transcription_response = elevenlabs_client.speech_to_text.convert(
+                file=io.BytesIO(audio_content),
+                model_id="scribe_v1"
+            )
+            
+            transcribed_text = transcription_response.text if hasattr(transcription_response, 'text') else str(transcription_response)
+            logger.info(f"✅ Transcribed: {transcribed_text}")
+            
+            if not transcribed_text or len(transcribed_text.strip()) == 0:
+                raise HTTPException(status_code=400, detail="No se pudo transcribir el audio. Intenta hablar más claro o grabar nuevamente.")
+        except Exception as e:
+            error_msg = str(e)
+            if "audio_too_short" in error_msg.lower() or "too short" in error_msg.lower():
+                raise HTTPException(status_code=400, detail="El audio es demasiado corto. Por favor, graba al menos 1-2 segundos de audio.")
+            elif "400" in error_msg or "Bad Request" in error_msg:
+                raise HTTPException(status_code=400, detail=f"Error al procesar el audio: {error_msg}")
+            else:
+                logger.error(f"Error en transcripción: {error_msg}")
+                raise HTTPException(status_code=500, detail="Error al transcribir el audio. Intenta nuevamente.")
         
         # Step 2: Get agent details to use the correct voice
         agent_voice_id = "5kMbtRSEKIkRZSdXxrZg"  # Dr. Prados voice (from agent config)
