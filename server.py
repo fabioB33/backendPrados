@@ -49,22 +49,22 @@ if ELEVENLABS_API_KEY:
 app = FastAPI()
 
 # CORS Configuration - Configuración directa y robusta
-# Dominios permitidos (hardcodeados como fallback)
+# Dominios permitidos (hardcodeados - estos son los que realmente funcionan)
 ALLOWED_ORIGINS = [
-    "https://legbotdev.pradosdeparaiso.com.pe",  # CORREGIDO: legbotdev (con 'g')
+    "https://legbotdev.pradosdeparaiso.com.pe",  # Dominio real (con 'g')
     "https://www.legbotdev.pradosdeparaiso.com.pe",
-    "https://leqbotdev.pradosdeparaiso.com.pe",  # Por si acaso también existe
     "http://localhost:3000",
     "http://localhost:3001",
 ]
 
-# Obtener de variable de entorno si existe
+# Obtener de variable de entorno si existe, pero PRIORIZAR los hardcodeados
 cors_origins_str = os.environ.get('CORS_ORIGINS', '')
 if cors_origins_str and cors_origins_str != '*':
     # Parsear variable de entorno
-    cors_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
-    # Combinar con los hardcodeados
-    cors_origins = list(set(cors_origins + ALLOWED_ORIGINS))
+    env_origins = [origin.strip() for origin in cors_origins_str.split(',') if origin.strip()]
+    # Combinar pero los hardcodeados tienen prioridad
+    cors_origins = ALLOWED_ORIGINS + [origin for origin in env_origins if origin not in ALLOWED_ORIGINS]
+    cors_origins = list(set(cors_origins))  # Eliminar duplicados
 else:
     cors_origins = ALLOWED_ORIGINS
 
