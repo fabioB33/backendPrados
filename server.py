@@ -250,19 +250,20 @@ En consecuencia, se reafirma que no existe riesgo alguno para el cliente respect
 
 # Helper functions
 async def get_ai_response(system_prompt: str, user_message: str) -> str:
-    """Generate AI response using OpenAI"""
+    """Generate AI response using OpenAI - Optimized for speed"""
     if not openai_client:
         raise HTTPException(status_code=503, detail="OpenAI not configured")
     
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",  # Más rápido que gpt-4o, mantiene buena calidad
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.7,
-            max_tokens=1000
+            temperature=0.5,  # Respuestas más directas y rápidas
+            max_tokens=400,  # Reducido para respuestas más cortas (3-4 frases)
+            timeout=15.0  # Timeout más corto para evitar esperas largas
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -378,15 +379,12 @@ async def voice_chat(audio: UploadFile = File(...)):
         
         # Step 2: Get AI response
         logger.info("🤖 Generating AI response...")
-        system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. 
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
+        system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-Responde de manera profesional, clara, concisa y precisa. Mantén las respuestas breves (máximo 3-4 frases) 
-ya que serán convertidas a voz. Si no tienes información específica, indica que el usuario debe consultar 
-con el equipo legal."""
+IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico y evita explicaciones largas. Si no tienes la información, di que consulte con el equipo legal."""
         
         ai_response = await get_ai_response(system_prompt, transcribed_text)
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
@@ -447,14 +445,12 @@ async def text_chat(request: dict):
         logger.info(f"💬 Text chat request: {text}")
         
         # Get AI response
-        system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. 
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
+        system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-Responde de manera profesional, clara y precisa. Si no tienes información específica, 
-indica que el usuario debe consultar con el equipo legal."""
+IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico. Si no tienes la información, di que consulte con el equipo legal."""
         
         ai_response = await get_ai_response(system_prompt, text)
         logger.info(f"✅ AI Response generated")
@@ -578,14 +574,12 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
             logger.warning(f"⚠️ Could not fetch agent details: {str(e)}, using default Dr. Prados voice")
         
         # Step 3: Generate AI response using the knowledge base context
-        system_prompt = f"""Eres {agent_name}, un asistente legal experto especializado en Prados de Paraíso.
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento del proyecto.
+        system_prompt = f"""Eres {agent_name}, un asistente legal experto especializado en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-Responde de manera profesional, clara, concisa y amigable como lo haría el Dr. Prados.
-Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a voz."""
+IMPORTANTE: Responde de forma directa, concisa y amigable como el Dr. Prados. Máximo 2-3 frases. Sé específico y evita explicaciones largas."""
         
         ai_response = await get_ai_response(system_prompt, transcribed_text)
         logger.info(f"✅ AI Response generated")
