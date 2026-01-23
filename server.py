@@ -15,6 +15,7 @@ import json
 import io
 import base64
 from elevenlabs import ElevenLabs, Voice, VoiceSettings
+from collections import defaultdict
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -82,6 +83,41 @@ app.add_middleware(
 )
 
 api_router = APIRouter(prefix="/api")
+
+# Sistema de memoria de conversación (en memoria)
+# Almacena el historial de mensajes por session_id
+conversation_history: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+# Máximo de mensajes a mantener en el historial (últimos 10 intercambios = 20 mensajes)
+MAX_HISTORY_MESSAGES = 20
+
+# Helper functions para manejo de conversaciones
+def get_or_create_session(session_id: Optional[str] = None) -> str:
+    """Obtiene un session_id existente o crea uno nuevo"""
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        logger.info(f"🆕 Nueva sesión creada: {session_id}")
+    return session_id
+
+def add_to_history(session_id: str, user_message: str, ai_response: str):
+    """Agrega mensajes al historial de la conversación"""
+    conversation_history[session_id].append({"role": "user", "content": user_message})
+    conversation_history[session_id].append({"role": "assistant", "content": ai_response})
+    
+    # Mantener solo los últimos N mensajes
+    if len(conversation_history[session_id]) > MAX_HISTORY_MESSAGES:
+        conversation_history[session_id] = conversation_history[session_id][-MAX_HISTORY_MESSAGES:]
+    
+    logger.info(f"💾 Historial actualizado para sesión {session_id[:8]}... ({len(conversation_history[session_id])} mensajes)")
+
+def get_conversation_history(session_id: str) -> List[Dict[str, str]]:
+    """Obtiene el historial de conversación para una sesión"""
+    return conversation_history.get(session_id, [])
+
+def clear_conversation(session_id: str):
+    """Limpia el historial de una conversación"""
+    if session_id in conversation_history:
+        del conversation_history[session_id]
+        logger.info(f"🗑️ Historial limpiado para sesión {session_id[:8]}...")
 
 # Información legal precargada - BASE DE CONOCIMIENTOS CORREGIDA (VERSIÓN FINAL)
 LEGAL_INFO = """
@@ -249,18 +285,26 @@ En consecuencia, se reafirma que no existe riesgo alguno para el cliente respect
 """
 
 # Helper functions
-async def get_ai_response(system_prompt: str, user_message: str) -> str:
-    """Generate AI response using OpenAI - Optimized for speed"""
+async def get_ai_response(system_prompt: str, user_message: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
+    """Generate AI response using OpenAI - Optimized for speed with conversation memory"""
     if not openai_client:
         raise HTTPException(status_code=503, detail="OpenAI not configured")
     
     try:
+        # Construir lista de mensajes con historial
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Agregar historial de conversación si existe
+        if conversation_history:
+            messages.extend(conversation_history)
+            logger.info(f"📚 Usando historial: {len(conversation_history)} mensajes previos")
+        
+        # Agregar el mensaje actual del usuario
+        messages.append({"role": "user", "content": user_message})
+        
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",  # Más rápido que gpt-4o, mantiene buena calidad
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
+            messages=messages,
             temperature=0.5,  # Respuestas más directas y rápidas
             max_tokens=400,  # Reducido para respuestas más cortas (3-4 frases)
             timeout=15.0  # Timeout más corto para evitar esperas largas
@@ -347,12 +391,13 @@ async def text_to_speech(request: dict):
 
 # Voice Chat Endpoint (Push-to-Talk)
 @api_router.post("/voice-chat")
-async def voice_chat(audio: UploadFile = File(...)):
+async def voice_chat(audio: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     """
-    Complete voice chat flow:
+    Complete voice chat flow with conversation memory:
     1. Transcribe audio using ElevenLabs STT
-    2. Get AI response using LLM
+    2. Get AI response using LLM with conversation history
     3. Convert response to speech using ElevenLabs TTS
+    4. Return session_id for maintaining conversation context
     """
     try:
         if not elevenlabs_client:
@@ -361,8 +406,11 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not OPENAI_API_KEY:
             raise HTTPException(status_code=503, detail="OpenAI not configured")
         
+        # Obtener o crear session_id
+        session_id = get_or_create_session(session_id)
+        
         # Step 1: Transcribe audio to text using ElevenLabs STT
-        logger.info("📝 Transcribing audio...")
+        logger.info(f"📝 Transcribing audio (sesión {session_id[:8]}...)...")
         audio_content = await audio.read()
         
         transcription_response = elevenlabs_client.speech_to_text.convert(
@@ -377,17 +425,24 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not transcribed_text or len(transcribed_text.strip()) == 0:
             raise HTTPException(status_code=400, detail="No se pudo transcribir el audio. Intenta hablar más claro.")
         
-        # Step 2: Get AI response
+        # Obtener historial de conversación
+        history = get_conversation_history(session_id)
+        
+        # Step 2: Get AI response con historial
         logger.info("🤖 Generating AI response...")
         system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico y evita explicaciones largas. Si no tienes la información, di que consulte con el equipo legal."""
+IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico y evita explicaciones largas. Si no tienes la información, di que consulte con el equipo legal.
+Recuerda el contexto de la conversación anterior para dar respuestas coherentes."""
         
-        ai_response = await get_ai_response(system_prompt, transcribed_text)
+        ai_response = await get_ai_response(system_prompt, transcribed_text, history)
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
+        
+        # Guardar en historial
+        add_to_history(session_id, transcribed_text, ai_response)
         
         # Step 3: Convert AI response to speech
         logger.info("🔊 Converting response to speech...")
@@ -413,6 +468,7 @@ IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé especí
         logger.info("✅ Voice chat completed successfully")
         
         return {
+            "session_id": session_id,  # Devolver session_id para mantener contexto
             "transcribed_text": transcribed_text,
             "ai_response": ai_response,
             "audio_url": f"data:audio/mpeg;base64,{audio_base64}",
@@ -429,10 +485,11 @@ IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé especí
 @api_router.post("/text-chat")
 async def text_chat(request: dict):
     """
-    Text-based chat flow (alternative to voice):
-    1. Get user text input
-    2. Get AI response using LLM
+    Text-based chat flow (alternative to voice) with conversation memory:
+    1. Get user text input and session_id (optional)
+    2. Get AI response using LLM with conversation history
     3. Convert response to speech using ElevenLabs TTS (optional)
+    4. Return session_id for maintaining conversation context
     """
     try:
         if not OPENAI_API_KEY:
@@ -442,18 +499,27 @@ async def text_chat(request: dict):
         if not text:
             raise HTTPException(status_code=400, detail="Text is required")
         
-        logger.info(f"💬 Text chat request: {text}")
+        # Obtener o crear session_id
+        session_id = get_or_create_session(request.get('session_id'))
+        logger.info(f"💬 Text chat request (sesión {session_id[:8]}...): {text}")
         
-        # Get AI response
+        # Obtener historial de conversación
+        history = get_conversation_history(session_id)
+        
+        # Get AI response con historial
         system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico. Si no tienes la información, di que consulte con el equipo legal."""
+IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé específico. Si no tienes la información, di que consulte con el equipo legal.
+Recuerda el contexto de la conversación anterior para dar respuestas coherentes."""
         
-        ai_response = await get_ai_response(system_prompt, text)
+        ai_response = await get_ai_response(system_prompt, text, history)
         logger.info(f"✅ AI Response generated")
+        
+        # Guardar en historial
+        add_to_history(session_id, text, ai_response)
         
         # Optionally convert to speech if ElevenLabs is available
         audio_url = None
@@ -486,6 +552,7 @@ IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé especí
                 logger.warning(f"⚠️ Could not generate audio: {str(e)}")
         
         return {
+            "session_id": session_id,  # Devolver session_id para mantener contexto
             "user_text": text,
             "ai_response": ai_response,
             "audio_url": audio_url,
@@ -503,14 +570,15 @@ IMPORTANTE: Responde de forma directa y concisa. Máximo 2-3 frases. Sé especí
 
 # Voice Agent Endpoint (using ElevenLabs Agent's voice and knowledge)
 @api_router.post("/voice-agent")
-async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
+async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...), session_id: Optional[str] = Form(None)):
     """
-    Send audio to get response using the ElevenLabs Agent's configured voice.
+    Send audio to get response using the ElevenLabs Agent's configured voice with conversation memory.
     This endpoint:
     1. Transcribes user audio (STT)
     2. Gets agent configuration (voice, personality)
-    3. Generates response using agent's knowledge base context
+    3. Generates response using agent's knowledge base context with conversation history
     4. Converts to speech using agent's voice (TTS)
+    5. Returns session_id for maintaining conversation context
     """
     try:
         if not elevenlabs_client:
@@ -519,7 +587,9 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
         if not OPENAI_API_KEY:
             raise HTTPException(status_code=503, detail="OpenAI not configured")
         
-        logger.info(f"🎙️ Processing voice with agent: {agent_id}")
+        # Obtener o crear session_id
+        session_id = get_or_create_session(session_id)
+        logger.info(f"🎙️ Processing voice with agent: {agent_id} (sesión {session_id[:8]}...)")
         
         # Step 1: Transcribe audio
         audio_content = await audio.read()
@@ -573,16 +643,23 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
         except Exception as e:
             logger.warning(f"⚠️ Could not fetch agent details: {str(e)}, using default Dr. Prados voice")
         
-        # Step 3: Generate AI response using the knowledge base context
+        # Obtener historial de conversación
+        history = get_conversation_history(session_id)
+        
+        # Step 3: Generate AI response using the knowledge base context con historial
         system_prompt = f"""Eres {agent_name}, un asistente legal experto especializado en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma directa, concisa y amigable como el Dr. Prados. Máximo 2-3 frases. Sé específico y evita explicaciones largas."""
+IMPORTANTE: Responde de forma directa, concisa y amigable como el Dr. Prados. Máximo 2-3 frases. Sé específico y evita explicaciones largas.
+Recuerda el contexto de la conversación anterior para dar respuestas coherentes."""
         
-        ai_response = await get_ai_response(system_prompt, transcribed_text)
+        ai_response = await get_ai_response(system_prompt, transcribed_text, history)
         logger.info(f"✅ AI Response generated")
+        
+        # Guardar en historial
+        add_to_history(session_id, transcribed_text, ai_response)
         
         # Step 4: Convert to speech using agent's voice
         audio_generator = elevenlabs_client.text_to_speech.convert(
@@ -605,6 +682,7 @@ IMPORTANTE: Responde de forma directa, concisa y amigable como el Dr. Prados. M�
         logger.info("✅ Voice agent response completed")
         
         return {
+            "session_id": session_id,  # Devolver session_id para mantener contexto
             "transcribed_text": transcribed_text,
             "agent_response": ai_response,
             "audio_url": f"data:audio/mpeg;base64,{audio_base64}",
@@ -620,6 +698,30 @@ IMPORTANTE: Responde de forma directa, concisa y amigable como el Dr. Prados. M�
         logger.error(f"❌ Error in voice agent: {str(e)}")
         logger.error(f"📋 Traceback: {error_trace}")
         raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
+
+# Endpoint para limpiar historial de conversación
+@api_router.post("/clear-conversation")
+async def clear_conversation_endpoint(request: dict):
+    """
+    Limpia el historial de una conversación específica
+    """
+    try:
+        session_id = request.get('session_id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id es requerido")
+        
+        clear_conversation(session_id)
+        logger.info(f"🗑️ Conversación limpiada para sesión {session_id[:8]}...")
+        
+        return {
+            "message": "Conversación limpiada exitosamente",
+            "session_id": session_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error limpiando conversación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error limpiando conversación: {str(e)}")
 
 
 app.include_router(api_router)
