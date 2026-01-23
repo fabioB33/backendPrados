@@ -15,7 +15,7 @@ import json
 import io
 import base64
 from elevenlabs import ElevenLabs, Voice, VoiceSettings
-from collections import defaultdict
+import aiosqlite
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -84,13 +84,36 @@ app.add_middleware(
 
 api_router = APIRouter(prefix="/api")
 
-# Sistema de memoria de conversación (en memoria)
-# Almacena el historial de mensajes por session_id
-conversation_history: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-# Máximo de mensajes a mantener en el historial (últimos 10 intercambios = 20 mensajes)
+# Configuración de base de datos SQLite
+DB_PATH = ROOT_DIR / "conversations.db"
 MAX_HISTORY_MESSAGES = 20
 
-# Helper functions para manejo de conversaciones
+# Inicializar base de datos al iniciar
+async def init_db():
+    """Inicializa la base de datos SQLite para almacenar conversaciones"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_created 
+            ON conversations(session_id, created_at)
+        """)
+        await db.commit()
+        logger.info(f"✅ Base de datos inicializada: {DB_PATH}")
+
+# Ejecutar inicialización al arrancar
+@app.on_event("startup")
+async def startup_event():
+    await init_db()
+
+# Helper functions para manejo de conversaciones con persistencia SQLite
 def get_or_create_session(session_id: Optional[str] = None) -> str:
     """Obtiene un session_id existente o crea uno nuevo"""
     if not session_id:
@@ -98,26 +121,70 @@ def get_or_create_session(session_id: Optional[str] = None) -> str:
         logger.info(f"🆕 Nueva sesión creada: {session_id}")
     return session_id
 
-def add_to_history(session_id: str, user_message: str, ai_response: str):
-    """Agrega mensajes al historial de la conversación"""
-    conversation_history[session_id].append({"role": "user", "content": user_message})
-    conversation_history[session_id].append({"role": "assistant", "content": ai_response})
-    
-    # Mantener solo los últimos N mensajes
-    if len(conversation_history[session_id]) > MAX_HISTORY_MESSAGES:
-        conversation_history[session_id] = conversation_history[session_id][-MAX_HISTORY_MESSAGES:]
-    
-    logger.info(f"💾 Historial actualizado para sesión {session_id[:8]}... ({len(conversation_history[session_id])} mensajes)")
+async def add_to_history(session_id: str, user_message: str, ai_response: str):
+    """Agrega mensajes al historial de la conversación en SQLite"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Insertar mensaje del usuario
+            await db.execute(
+                "INSERT INTO conversations (session_id, role, content) VALUES (?, ?, ?)",
+                (session_id, "user", user_message)
+            )
+            # Insertar respuesta del asistente
+            await db.execute(
+                "INSERT INTO conversations (session_id, role, content) VALUES (?, ?, ?)",
+                (session_id, "assistant", ai_response)
+            )
+            await db.commit()
+            
+            # Limpiar mensajes antiguos (mantener solo los últimos N)
+            await db.execute("""
+                DELETE FROM conversations 
+                WHERE session_id = ? 
+                AND id NOT IN (
+                    SELECT id FROM conversations 
+                    WHERE session_id = ? 
+                    ORDER BY created_at DESC 
+                    LIMIT ?
+                )
+            """, (session_id, session_id, MAX_HISTORY_MESSAGES))
+            await db.commit()
+            
+            logger.info(f"💾 Historial guardado en BD para sesión {session_id[:8]}...")
+    except Exception as e:
+        logger.error(f"❌ Error guardando historial: {str(e)}")
+        # No lanzar error para no interrumpir la respuesta al usuario
 
-def get_conversation_history(session_id: str) -> List[Dict[str, str]]:
-    """Obtiene el historial de conversación para una sesión"""
-    return conversation_history.get(session_id, [])
+async def get_conversation_history(session_id: str) -> List[Dict[str, str]]:
+    """Obtiene el historial de conversación para una sesión desde SQLite"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT role, content 
+                FROM conversations 
+                WHERE session_id = ? 
+                ORDER BY created_at ASC 
+                LIMIT ?
+            """, (session_id, MAX_HISTORY_MESSAGES)) as cursor:
+                rows = await cursor.fetchall()
+                history = [{"role": row["role"], "content": row["content"]} for row in rows]
+                logger.info(f"📚 Historial cargado: {len(history)} mensajes para sesión {session_id[:8]}...")
+                return history
+    except Exception as e:
+        logger.error(f"❌ Error cargando historial: {str(e)}")
+        return []
 
-def clear_conversation(session_id: str):
-    """Limpia el historial de una conversación"""
-    if session_id in conversation_history:
-        del conversation_history[session_id]
-        logger.info(f"🗑️ Historial limpiado para sesión {session_id[:8]}...")
+async def clear_conversation(session_id: str):
+    """Limpia el historial de una conversación en SQLite"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
+            await db.commit()
+            logger.info(f"🗑️ Historial limpiado para sesión {session_id[:8]}...")
+    except Exception as e:
+        logger.error(f"❌ Error limpiando historial: {str(e)}")
+        raise
 
 # Información legal precargada - BASE DE CONOCIMIENTOS CORREGIDA (VERSIÓN FINAL)
 LEGAL_INFO = """
@@ -442,7 +509,7 @@ Recuerda el contexto de la conversación anterior para dar respuestas coherentes
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
         
         # Guardar en historial
-        add_to_history(session_id, transcribed_text, ai_response)
+        await add_to_history(session_id, transcribed_text, ai_response)
         
         # Step 3: Convert AI response to speech
         logger.info("🔊 Converting response to speech...")
@@ -504,7 +571,7 @@ async def text_chat(request: dict):
         logger.info(f"💬 Text chat request (sesión {session_id[:8]}...): {text}")
         
         # Obtener historial de conversación
-        history = get_conversation_history(session_id)
+        history = await get_conversation_history(session_id)
         
         # Get AI response con historial
         system_prompt = f"""Eres un asistente legal experto en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
@@ -519,7 +586,7 @@ Recuerda el contexto de la conversación anterior para dar respuestas coherentes
         logger.info(f"✅ AI Response generated")
         
         # Guardar en historial
-        add_to_history(session_id, text, ai_response)
+        await add_to_history(session_id, text, ai_response)
         
         # Optionally convert to speech if ElevenLabs is available
         audio_url = None
@@ -644,7 +711,7 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...), 
             logger.warning(f"⚠️ Could not fetch agent details: {str(e)}, using default Dr. Prados voice")
         
         # Obtener historial de conversación
-        history = get_conversation_history(session_id)
+        history = await get_conversation_history(session_id)
         
         # Step 3: Generate AI response using the knowledge base context con historial
         system_prompt = f"""Eres {agent_name}, un asistente legal experto especializado en Prados de Paraíso. Responde preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
@@ -659,7 +726,7 @@ Recuerda el contexto de la conversación anterior para dar respuestas coherentes
         logger.info(f"✅ AI Response generated")
         
         # Guardar en historial
-        add_to_history(session_id, transcribed_text, ai_response)
+        await add_to_history(session_id, transcribed_text, ai_response)
         
         # Step 4: Convert to speech using agent's voice
         audio_generator = elevenlabs_client.text_to_speech.convert(
@@ -710,7 +777,7 @@ async def clear_conversation_endpoint(request: dict):
         if not session_id:
             raise HTTPException(status_code=400, detail="session_id es requerido")
         
-        clear_conversation(session_id)
+        await clear_conversation(session_id)
         logger.info(f"🗑️ Conversación limpiada para sesión {session_id[:8]}...")
         
         return {
