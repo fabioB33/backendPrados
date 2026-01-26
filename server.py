@@ -237,7 +237,7 @@ b) Proceso de Adquisición: El proceso para adquirir un lote con nosotros se bas
     • Escrituras Públicas: Se te facilitarán las escrituras que respaldan la posesión legítima del predio por parte de la empresa desde el año 1998.
     • Cartillas Municipales: Se entregarán los documentos de PR (Predio Rústico) y HR (Hoja Resumen), que demuestran el cumplimiento de obligaciones municipales.
 
-17. ¿Qué significa una transferencia de posesión? Una transferencia de posesión significa que se te otorga el derecho de usar y disfrutar un terreno, es decir, tienes el control físico sobre él. En Prados de Paraíso, la empresa te transfiere esta posesión mediante un Contrato de Transferencia de Posesión, que puede elevarse a Escritura Pública para mayor seguridad.
+17. ¿Qué significa una transferencia de posesión? Una transferencia de posesión significa que se te otorga el uso y disfrute del predio. En el caso de Prados de Paraíso, la empresa transfiere la posesión del lote. Este derecho se formaliza a través de un Contrato de Transferencia de Posesión, el cual se eleva a Escritura Pública ante un notario.
 
 18. ¿Qué derechos tengo como poseedor? Como poseedor, usted tiene el derecho de disponer y disfrutar del bien como si fuera suyo, ejerciendo un poder de hecho. Esto significa que puede usar y controlar el lote, incluso si aún no es el propietario. Esto significa que puedes usar el lote, construir, cultivarlo o darle el uso que desees, siempre dentro de los límites legales y contractuales.
 
@@ -319,7 +319,7 @@ En pocas palabras, la ley protege al Estado frente a nuevas reclamaciones de pre
 
 45. ¿La empresa acompaña judicialmente al cliente si hay alguna contingencia legal? En caso de que enfrentes una contingencia legal o decidas iniciar un proceso de formalización de tu lote, la gestión y representación legal corresponde al cliente. La empresa proporciona toda la documentación probatoria disponible para respaldar tu caso y facilitar tu defensa, pero la representación ante un juez debe ser realizada por tu propio abogado.
 
-46. ¿La empresa indemnizará en caso de pérdida de posesión? La empresa no asume responsabilidad económica por la pérdida de la posesión si esta es causada por hechos externos o ajenos al incumplimiento del comprador. La empresa garantiza la entrega de una posesión documentada y formalizada mediante contrato, y respalda esa posesión con la documentación histórica que posee. Sin embargo, no menciona una política de indemnización específica en caso de pérdida de posesión.
+46. ¿La empresa indemnizará en caso de pérdida de posesión? La empresa no menciona una política de indemnización específica en caso de pérdida de posesión, sino que se enfoca en asegurar la posesión que se transfiere y en proporcionar toda la documentación necesaria para que el cliente, si lo desea, pueda iniciar su propio proceso de saneamiento y obtener el título de propiedad.
 
 47. ¿Se puede individualizar la posesión por cada lote? ¡Claro que sí! Cuando firmas el Contrato de Transferencia de Posesión, este documento delimita y asigna el derecho de uso y disfrute exclusivo sobre un lote determinado dentro del proyecto. Es decir, tú tienes el control físico y el derecho a usar y disfrutar ese espacio concreto, cercarlo o construir en él.
 
@@ -343,7 +343,7 @@ En pocas palabras, la ley protege al Estado frente a nuevas reclamaciones de pre
 
 57. ¿La empresa se responsabiliza por daños externos? La empresa no asume responsabilidad por daños ocasionados por factores externos que estén fuera de su control, tales como desastres naturales, actos de terceros, decisiones de autoridades o cualquier otro evento fortuito o de fuerza mayor. La responsabilidad de la empresa se limita a cumplir con las obligaciones expresamente asumidas en el contrato, principalmente la entrega de la posesión del lote y la documentación correspondiente.
 
-58. Si la empresa DSMN deja de pagar la deuda pendiente con el señor Manuel Ampuero por la transferencia de posesión, ¿Eso podría hacer que yo pierda mi lote o mi derecho de posesión?
+58. Si la empresa Desarrolladora Santa Mariaa del Norte S.A.C deja de pagar la deuda pendiente con el señor Manuel Ampuero por la transferencia de posesión, ¿Eso podría hacer que yo pierda mi lote o mi derecho de posesión?
 Desde la suscripción de la Escritura Pública por la que el señor Manuel Ampuero transfirió la posesión a favor de Desarrolladora Santa María del Norte (en adelante, la "empresa"), adquirió válidamente la posesión efectiva del terreno.
 En consecuencia, desde esa fecha la empresa ostenta la calidad de poseedora,, con plena facultad para transferir dicha posesión a terceros. Esta condición posesoria no se ve afectada por las obligaciones internas o relaciones económicas que puedan existir entre las partes que intervinieron en la transferencia original.
 Así, aun en el supuesto de que la empresa incumpliera algún pago u obligación económica pendiente frente al señor Ampuero, ello no genera la pérdida, restitución ni afectación de la posesión ya transferida. La posesión se mantiene firme, pues fue otorgada formalmente mediante escritura pública y recae sobre la empresa como persona jurídica.
