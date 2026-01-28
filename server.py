@@ -372,8 +372,8 @@ async def get_ai_response(system_prompt: str, user_message: str, conversation_hi
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",  # Más rápido que gpt-4o, mantiene buena calidad
             messages=messages,
-            temperature=0.7,  # Respuestas más naturales y amigables
-            max_tokens=800,  # Permite respuestas más desarrolladas y completas
+            temperature=0.65,  # Balance entre naturalidad y velocidad
+            max_tokens=600,  # Respuestas desarrolladas pero optimizadas para velocidad
             timeout=15.0  # Timeout más corto para evitar esperas largas
         )
         return response.choices[0].message.content
@@ -502,7 +502,7 @@ async def voice_chat(audio: UploadFile = File(...), session_id: Optional[str] = 
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma amigable, profesional y desarrollada. Explica los conceptos de manera clara y completa, como si estuvieras conversando con un cliente. Sé empático y comprensivo. Desarrolla tus respuestas con ejemplos cuando sea útil, pero mantén la información precisa y basada en la información legal disponible. Si no tienes la información específica, indica amablemente que el usuario debe consultar con el equipo legal.
+IMPORTANTE: Responde de forma amigable, profesional y desarrollada. Explica los conceptos de manera clara y completa, como si estuvieras conversando con un cliente. Sé empático y comprensivo. Desarrolla tus respuestas de forma concisa pero completa (4-6 frases), usando ejemplos cuando sea útil. Mantén la información precisa y basada en la información legal disponible. Si no tienes la información específica, indica amablemente que el usuario debe consultar con el equipo legal.
 Recuerda el contexto de la conversación anterior para dar respuestas coherentes y naturales."""
         
         ai_response = await get_ai_response(system_prompt, transcribed_text, history)
@@ -579,7 +579,7 @@ async def text_chat(request: dict):
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma amigable, profesional y desarrollada. Explica los conceptos de manera clara y completa, como si estuvieras conversando con un cliente. Sé empático y comprensivo. Desarrolla tus respuestas con ejemplos cuando sea útil, pero mantén la información precisa y basada en la información legal disponible. Si no tienes la información específica, indica amablemente que el usuario debe consultar con el equipo legal.
+IMPORTANTE: Responde de forma amigable, profesional y desarrollada. Explica los conceptos de manera clara y completa, como si estuvieras conversando con un cliente. Sé empático y comprensivo. Desarrolla tus respuestas de forma concisa pero completa (4-6 frases), usando ejemplos cuando sea útil. Mantén la información precisa y basada en la información legal disponible. Si no tienes la información específica, indica amablemente que el usuario debe consultar con el equipo legal.
 Recuerda el contexto de la conversación anterior para dar respuestas coherentes y naturales."""
         
         ai_response = await get_ai_response(system_prompt, text, history)
@@ -719,7 +719,7 @@ async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...), 
 Información legal disponible:
 {LEGAL_INFO}
 
-IMPORTANTE: Responde de forma amigable, cálida y desarrollada como lo haría el Dr. Prados. Sé conversacional y empático. Explica los conceptos de manera clara y completa, desarrollando tus respuestas para que el cliente entienda bien. Usa un tono cercano y profesional, como si estuvieras hablando con un amigo o colega. Desarrolla tus respuestas con suficiente detalle para que sean útiles y comprensibles.
+IMPORTANTE: Responde de forma amigable, cálida y desarrollada como lo haría el Dr. Prados. Sé conversacional y empático. Explica los conceptos de manera clara y completa de forma concisa pero desarrollada (4-6 frases). Usa un tono cercano y profesional, como si estuvieras hablando con un amigo o colega. Desarrolla tus respuestas con suficiente detalle para que sean útiles y comprensibles, pero de forma eficiente.
 Recuerda el contexto de la conversación anterior para dar respuestas coherentes y naturales."""
         
         ai_response = await get_ai_response(system_prompt, transcribed_text, history)
