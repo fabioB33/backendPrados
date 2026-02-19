@@ -1,0 +1,46 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Database (contiene datos - no subir)
+*.db
+*.sqlite
+*.sqlite3
+prados.db
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+*.bak
+*.broken
+server.py.broken
