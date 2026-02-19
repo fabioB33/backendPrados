@@ -1,17 +1,21 @@
 """
 SQLite Knowledge Base Service
-Gestiona el conocimiento legal en base de datos local SQLite
+Gestiona el conocimiento legal en base de datos local SQLite.
+En Render usa búsqueda por keywords (sin modelos) para evitar exceder 512MB RAM.
+Localmente puede usar SentenceTransformer si USE_SEMANTIC_SEARCH=1.
 """
 import os
 import sqlite3
 import json
 import logging
+import re
 from typing import List, Dict, Optional
-import numpy as np
-from sentence_transformers import SentenceTransformer
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Solo cargar SentenceTransformer si se usa búsqueda semántica (local)
+_USE_SEMANTIC = os.environ.get("USE_SEMANTIC_SEARCH", "").lower() in ("1", "true", "yes")
 
 
 def _default_sqlite_path() -> str:
@@ -35,12 +39,16 @@ class SQLiteKnowledgeBase:
         self.db_path = db_path or _default_sqlite_path()
         self.model = None
         self.conn = None
+        self.use_semantic = _USE_SEMANTIC
         
         # Inicializar base de datos
         self._init_database()
         
-        # Cargar modelo de embeddings
-        self._load_model()
+        # Cargar modelo de embeddings solo si se usa búsqueda semántica (consume ~500MB)
+        if self.use_semantic:
+            self._load_model()
+        else:
+            logger.info("✅ Using keyword search (lightweight, no model)")
         
         logger.info(f"✅ SQLite KnowledgeBase initialized at {self.db_path}")
     
@@ -80,8 +88,9 @@ class SQLiteKnowledgeBase:
             raise
     
     def _load_model(self):
-        """Carga el modelo de sentence transformers"""
+        """Carga el modelo de sentence transformers (solo si USE_SEMANTIC_SEARCH=1)"""
         try:
+            from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
             logger.info("✅ Sentence transformer model loaded")
         except Exception as e:
@@ -131,24 +140,24 @@ class SQLiteKnowledgeBase:
     
     def search(self, query: str, top_k: int = 3) -> List[Dict]:
         """
-        Realiza búsqueda semántica en la base de conocimiento
-        
-        Args:
-            query: Consulta del usuario
-            top_k: Número de resultados a retornar
-            
-        Returns:
-            Lista de documentos relevantes con sus scores
+        Realiza búsqueda en la base de conocimiento.
+        Con USE_SEMANTIC_SEARCH=1: búsqueda semántica (requiere ~500MB RAM).
+        Por defecto: búsqueda por keywords (ligera, ideal para Render).
         """
+        if self.model:
+            return self._search_semantic(query, top_k)
+        return self._search_keywords(query, top_k)
+    
+    def _search_keywords(self, query: str, top_k: int) -> List[Dict]:
+        """Búsqueda por coincidencia de palabras clave (sin modelo, ligera)."""
         try:
-            # Generar embedding de la consulta
-            query_embedding = self.model.encode(query)
+            words = [w.strip().lower() for w in re.split(r'\s+', query) if len(w.strip()) > 2]
+            if not words:
+                words = [query.lower()]
             
-            # Obtener todos los documentos
             conn = self._get_connection()
             cursor = conn.cursor()
-            
-            cursor.execute('SELECT id, titulo, contenido, embedding FROM conocimiento_legal')
+            cursor.execute('SELECT id, titulo, contenido FROM conocimiento_legal')
             rows = cursor.fetchall()
             conn.close()
             
@@ -156,17 +165,52 @@ class SQLiteKnowledgeBase:
                 logger.warning("No documents in knowledge base")
                 return []
             
-            # Calcular similitud coseno
+            results = []
+            for row in rows:
+                doc_id, titulo, contenido = row
+                text = f"{titulo} {contenido}".lower()
+                matches = sum(1 for w in words if w in text)
+                score = matches / len(words) if words else 0
+                if score > 0:
+                    results.append({
+                        'id': doc_id,
+                        'titulo': titulo,
+                        'contenido': contenido,
+                        'score': float(score)
+                    })
+            
+            results.sort(key=lambda x: x['score'], reverse=True)
+            top_results = results[:top_k]
+            logger.info(f"Search (keywords): '{query}' - Found {len(top_results)} documents")
+            return top_results
+        except Exception as e:
+            logger.error(f"Error searching: {str(e)}")
+            return []
+    
+    def _search_semantic(self, query: str, top_k: int) -> List[Dict]:
+        """Búsqueda semántica con embeddings (solo si model cargado)."""
+        try:
+            import numpy as np
+            query_embedding = self.model.encode(query)
+            
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, titulo, contenido, embedding FROM conocimiento_legal')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if not rows:
+                return []
+            
             results = []
             for row in rows:
                 doc_id, titulo, contenido, embedding_json = row
+                if not embedding_json:
+                    continue
                 doc_embedding = np.array(json.loads(embedding_json))
-                
-                # Similitud coseno
                 similarity = np.dot(query_embedding, doc_embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding)
+                    np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding) + 1e-9
                 )
-                
                 results.append({
                     'id': doc_id,
                     'titulo': titulo,
@@ -174,18 +218,10 @@ class SQLiteKnowledgeBase:
                     'score': float(similarity)
                 })
             
-            # Ordenar por score descendente
             results.sort(key=lambda x: x['score'], reverse=True)
-            
-            # Retornar top_k resultados
-            top_results = results[:top_k]
-            
-            logger.info(f"Search query: '{query}' - Found {len(top_results)} relevant documents")
-            
-            return top_results
-            
+            return results[:top_k]
         except Exception as e:
-            logger.error(f"Error searching: {str(e)}")
+            logger.error(f"Error in semantic search: {str(e)}")
             return []
     
     def get_all_documents(self) -> List[Dict]:
