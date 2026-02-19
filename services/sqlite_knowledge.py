@@ -2,6 +2,7 @@
 SQLite Knowledge Base Service
 Gestiona el conocimiento legal en base de datos local SQLite
 """
+import os
 import sqlite3
 import json
 import logging
@@ -12,15 +13,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _default_sqlite_path() -> str:
+    """Ruta por defecto: env SQLITE_DB_PATH, o /tmp en Render, o carpeta backend en local."""
+    if os.environ.get("SQLITE_DB_PATH"):
+        return os.environ["SQLITE_DB_PATH"]
+    # En Render/containers el código suele estar en /app y el filesystem es read-only salvo /tmp
+    if Path("/app").exists() and Path(__file__).resolve().parts[:2] == ("/", "app"):
+        return "/tmp/prados.db"
+    return str(Path(__file__).resolve().parent.parent / "prados.db")
+
+
 class SQLiteKnowledgeBase:
-    def __init__(self, db_path: str = "/app/backend/prados.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """
         Inicializa la base de conocimiento SQLite
         
         Args:
-            db_path: Ruta al archivo de base de datos
+            db_path: Ruta al archivo de base de datos (opcional; por defecto desde env o automático)
         """
-        self.db_path = db_path
+        self.db_path = db_path or _default_sqlite_path()
         self.model = None
         self.conn = None
         
@@ -30,11 +42,13 @@ class SQLiteKnowledgeBase:
         # Cargar modelo de embeddings
         self._load_model()
         
-        logger.info(f"✅ SQLite KnowledgeBase initialized at {db_path}")
+        logger.info(f"✅ SQLite KnowledgeBase initialized at {self.db_path}")
     
     def _init_database(self):
         """Crea la base de datos y tablas si no existen"""
         try:
+            db_path = Path(self.db_path)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
