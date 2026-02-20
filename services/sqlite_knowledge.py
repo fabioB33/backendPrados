@@ -1,17 +1,20 @@
 """
 SQLite Knowledge Base Service
-Gestiona el conocimiento legal en base de datos local SQLite
+Gestiona el conocimiento legal en base de datos local SQLite.
+En entornos con poca RAM (ej. Render 512MB) usar DISABLE_EMBEDDINGS=1 para
+búsqueda por palabras clave sin cargar SentenceTransformer/torch.
 """
 import os
 import sqlite3
 import json
 import logging
 from typing import List, Dict, Optional
-import numpy as np
-from sentence_transformers import SentenceTransformer
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Solo importar numpy/sentence_transformers cuando se use embeddings (ahorra ~400MB+ en Render)
+_EMBEDDINGS_DISABLED = os.environ.get("DISABLE_EMBEDDINGS", "").strip().lower() in ("1", "true", "yes")
 
 
 def _default_sqlite_path() -> str:
@@ -41,10 +44,13 @@ class SQLiteKnowledgeBase:
         # Inicializar base de datos
         self._init_database()
         
-        # Cargar modelo de embeddings
-        self._load_model()
+        # Cargar modelo de embeddings solo si no está desactivado (ahorra RAM en Render 512MB)
+        if not _EMBEDDINGS_DISABLED:
+            self._load_model()
+        else:
+            logger.info("✅ SQLite KnowledgeBase: embeddings disabled (keyword search only)")
         
-        logger.info(f"✅ SQLite KnowledgeBase initialized at {db_path}")
+        logger.info(f"✅ SQLite KnowledgeBase initialized at {self.db_path}")
     
     def _init_database(self):
         """Crea la base de datos y tablas si no existen"""
@@ -82,8 +88,9 @@ class SQLiteKnowledgeBase:
             raise
     
     def _load_model(self):
-        """Carga el modelo de sentence transformers"""
+        """Carga el modelo de sentence transformers (solo si embeddings no están desactivados)."""
         try:
+            from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
             logger.info("✅ Sentence transformer model loaded")
         except Exception as e:
@@ -96,98 +103,98 @@ class SQLiteKnowledgeBase:
     
     def add_document(self, titulo: str, contenido: str, metadata: Optional[Dict] = None):
         """
-        Agrega un documento a la base de conocimiento
-        
-        Args:
-            titulo: Título del documento
-            contenido: Contenido del documento
-            metadata: Metadatos adicionales
+        Agrega un documento a la base de conocimiento.
+        Si embeddings están desactivados, guarda sin embedding (búsqueda por keywords).
         """
         try:
-            # Generar embedding
-            embedding = self.model.encode(contenido).tolist()
-            embedding_json = json.dumps(embedding)
+            embedding_json = None
+            if self.model is not None:
+                embedding = self.model.encode(contenido).tolist()
+                embedding_json = json.dumps(embedding)
             
-            # Convertir metadata a JSON
             metadata_json = json.dumps(metadata) if metadata else None
             
-            # Insertar en base de datos
             conn = self._get_connection()
             cursor = conn.cursor()
-            
             cursor.execute('''
                 INSERT INTO conocimiento_legal (titulo, contenido, embedding, metadata)
                 VALUES (?, ?, ?, ?)
             ''', (titulo, contenido, embedding_json, metadata_json))
-            
             conn.commit()
             doc_id = cursor.lastrowid
             conn.close()
             
             logger.info(f"✅ Document added: {titulo} (ID: {doc_id})")
             return doc_id
-            
         except Exception as e:
             logger.error(f"Error adding document: {str(e)}")
             raise
     
     def search(self, query: str, top_k: int = 3) -> List[Dict]:
         """
-        Realiza búsqueda semántica en la base de conocimiento
-        
-        Args:
-            query: Consulta del usuario
-            top_k: Número de resultados a retornar
-            
-        Returns:
-            Lista de documentos relevantes con sus scores
+        Búsqueda en la base de conocimiento.
+        Con embeddings: semántica. Sin embeddings (DISABLE_EMBEDDINGS): por palabras clave.
         """
         try:
-            # Generar embedding de la consulta
-            query_embedding = self.model.encode(query)
+            if self.model is None:
+                return self._search_keyword(query, top_k)
             
-            # Obtener todos los documentos
+            import numpy as np
+            query_embedding = self.model.encode(query)
             conn = self._get_connection()
             cursor = conn.cursor()
-            
-            cursor.execute('SELECT id, titulo, contenido, embedding FROM conocimiento_legal')
+            cursor.execute('SELECT id, titulo, contenido, embedding FROM conocimiento_legal WHERE embedding IS NOT NULL')
             rows = cursor.fetchall()
             conn.close()
             
             if not rows:
-                logger.warning("No documents in knowledge base")
-                return []
+                logger.warning("No documents with embeddings in knowledge base")
+                return self._search_keyword(query, top_k)
             
-            # Calcular similitud coseno
             results = []
             for row in rows:
                 doc_id, titulo, contenido, embedding_json = row
+                if not embedding_json:
+                    continue
                 doc_embedding = np.array(json.loads(embedding_json))
-                
-                # Similitud coseno
                 similarity = np.dot(query_embedding, doc_embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding)
+                    np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding) + 1e-9
                 )
-                
-                results.append({
-                    'id': doc_id,
-                    'titulo': titulo,
-                    'contenido': contenido,
-                    'score': float(similarity)
-                })
-            
-            # Ordenar por score descendente
+                results.append({'id': doc_id, 'titulo': titulo, 'contenido': contenido, 'score': float(similarity)})
             results.sort(key=lambda x: x['score'], reverse=True)
-            
-            # Retornar top_k resultados
             top_results = results[:top_k]
-            
             logger.info(f"Search query: '{query}' - Found {len(top_results)} relevant documents")
-            
             return top_results
-            
         except Exception as e:
             logger.error(f"Error searching: {str(e)}")
+            return []
+    
+    def _search_keyword(self, query: str, top_k: int) -> List[Dict]:
+        """Búsqueda por palabras clave (SQL LIKE). Usado cuando embeddings están desactivados."""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            terms = [t.strip() for t in query.split() if t.strip()]
+            if not terms:
+                cursor.execute("SELECT id, titulo, contenido FROM conocimiento_legal LIMIT ?", (top_k,))
+            else:
+                placeholders = " OR ".join(["(titulo LIKE ? OR contenido LIKE ?)" for _ in terms])
+                params = []
+                for t in terms:
+                    p = f"%{t}%"
+                    params.extend([p, p])
+                params.append(top_k)
+                cursor.execute(
+                    "SELECT id, titulo, contenido FROM conocimiento_legal WHERE " + placeholders + " LIMIT ?",
+                    params
+                )
+            rows = cursor.fetchall()
+            conn.close()
+            results = [{"id": r[0], "titulo": r[1], "contenido": r[2], "score": 1.0} for r in rows]
+            logger.info(f"Keyword search '{query}' - Found {len(results)} documents")
+            return results
+        except Exception as e:
+            logger.error(f"Error in keyword search: {str(e)}")
             return []
     
     def get_all_documents(self) -> List[Dict]:

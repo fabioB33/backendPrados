@@ -240,6 +240,8 @@ async def get_conversation(conversation_id: str):
 @api_router.post("/messages", response_model=Message)
 async def create_message_endpoint(msg: MessageCreate):
     try:
+        if not openai_client:
+            raise HTTPException(status_code=503, detail="LLM not configured (OPENAI_API_KEY missing)")
         # Create user message
         user_msg = Message(
             conversation_id=msg.conversation_id,
@@ -715,6 +717,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: str):
             # Send user message confirmation
             await websocket.send_json(user_msg.model_dump(mode='json'))
             
+            if not openai_client:
+                await websocket.send_json({"role": "assistant", "content": "LLM no configurado (falta OPENAI_API_KEY).", "conversation_id": conversation_id})
+                continue
             # Generate AI response
             system_prompt = f'''Eres un asistente legal experto en Prados de Paraíso.
 
