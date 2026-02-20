@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 import asyncio
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from openai import AsyncOpenAI
 import aiofiles
 import json
 import io
@@ -33,7 +33,8 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', os.environ.get('EMERGENT_LLM_KEY', ''))
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
 
 # Initialize ElevenLabs client
@@ -263,16 +264,15 @@ Información legal disponible:
 Responde de manera profesional, clara y precisa. Si no tienes información específica, 
 indica que el usuario debe consultar con el equipo legal.'''
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=msg.conversation_id,
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
+        completion = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": msg.content}
+            ]
+        )
+        ai_response = completion.choices[0].message.content
         
-        user_message = UserMessage(text=msg.content)
-        ai_response = await chat.send_message(user_message)
-        
-        # Create assistant message
         assistant_msg = Message(
             conversation_id=msg.conversation_id,
             role="assistant",
@@ -503,8 +503,8 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not elevenlabs_client:
             raise HTTPException(status_code=503, detail="ElevenLabs not configured")
         
-        if not EMERGENT_LLM_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
+        if not openai_client:
+            raise HTTPException(status_code=503, detail="LLM not configured (OPENAI_API_KEY missing)")
         
         # Step 1: Transcribe audio to text using ElevenLabs STT
         logger.info("📝 Transcribing audio...")
@@ -547,14 +547,14 @@ INSTRUCCIONES:
 - Responde en español con acento argentino
 '''
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id="voice_chat_" + str(uuid.uuid4()),
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=transcribed_text)
-        ai_response = await chat.send_message(user_message)
+        completion = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": transcribed_text}
+            ]
+        )
+        ai_response = completion.choices[0].message.content
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
         
         # Step 3: Convert AI response to speech
@@ -604,8 +604,8 @@ async def text_chat(request: dict):
     3. Convert response to speech using ElevenLabs TTS (optional)
     '''
     try:
-        if not EMERGENT_LLM_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
+        if not openai_client:
+            raise HTTPException(status_code=503, detail="LLM not configured (OPENAI_API_KEY missing)")
         
         text = request.get('text', '').strip()
         if not text:
@@ -638,14 +638,14 @@ INSTRUCCIONES:
 - Responde en español con acento argentino
 '''
         
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id="text_chat_" + str(uuid.uuid4()),
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o")
-        
-        user_message = UserMessage(text=text)
-        ai_response = await chat.send_message(user_message)
+        completion = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ]
+        )
+        ai_response = completion.choices[0].message.content
         logger.info(f"✅ AI Response generated")
         
         # Optionally convert to speech if ElevenLabs is available
@@ -722,14 +722,14 @@ Información legal:
 
 Responde de manera profesional y clara.'''
             
-            chat = LlmChat(
-                api_key=EMERGENT_LLM_KEY,
-                session_id=conversation_id,
-                system_message=system_prompt
-            ).with_model("openai", "gpt-4o")
-            
-            user_message = UserMessage(text=message_data['content'])
-            ai_response = await chat.send_message(user_message)
+            completion = await openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message_data['content']}
+                ]
+            )
+            ai_response = completion.choices[0].message.content
             
             # Create assistant message
             assistant_msg = Message(
