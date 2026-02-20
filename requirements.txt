@@ -66,7 +66,7 @@ multidict==6.7.0
 mypy==1.18.2
 mypy_extensions==1.1.0
 networkx==3.0
-numpy==2.24.0
+numpy>=2.0.0,<2.24
 oauthlib==3.3.1
 openai==1.99.9
 packaging==25.0
@@ -109,8 +109,8 @@ rsa==4.9.1
 s3transfer==0.14.0
 s5cmd==0.2.0
 safetensors==0.7.0
-scikit-learn==1.8.0
-scipy==1.17.0
+scikit-learn>=1.5.0,<1.8
+scipy>=1.10.0,<1.16
 sentence-transformers==5.2.3
 shellingham==1.5.4
 six==1.17.0
