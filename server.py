@@ -79,6 +79,13 @@ app.add_middleware(
 
 api_router = APIRouter(prefix="/api")
 
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Evita 500 cuando el navegador pide el favicon."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
 # Información legal precargada (debe coincidir con base de conocimientos de ElevenLabs)
 LEGAL_INFO = """
 Eres un asistente legal muy útil. Utiliza la información que tienes en tu base de conocimientos para contestar las preguntas.
@@ -525,17 +532,20 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not transcribed_text or len(transcribed_text.strip()) == 0:
             raise HTTPException(status_code=400, detail="No se pudo transcribir el audio. Intenta hablar más claro.")
         
-        # Step 2: Get AI response with SQLite semantic search
+        # Step 2: Get AI response with SQLite semantic search (o LEGAL_INFO si la base está vacía)
         logger.info("🔍 Searching in SQLite knowledge base...")
         relevant_docs = sqlite_kb.search(query=transcribed_text, top_k=3)
         
-        # Build context
         context_parts = []
         for i, doc in enumerate(relevant_docs, 1):
             if doc['score'] > 0.4:
                 context_parts.append(f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}")
         
-        context = "\n\n".join(context_parts) if context_parts else "No se encontró información específica."
+        if context_parts:
+            context = "\n\n".join(context_parts)
+        else:
+            context = LEGAL_INFO
+            logger.info("📋 No hay documentos en la base; usando información legal precargada (LEGAL_INFO)")
         
         logger.info("🤖 Generating AI response...")
         system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso.
@@ -616,17 +626,20 @@ async def text_chat(request: dict):
         
         logger.info(f"💬 Text chat request: {text}")
         
-        # Get AI response with SQLite semantic search
+        # Get AI response with SQLite semantic search (o LEGAL_INFO si la base está vacía)
         logger.info("🔍 Searching in SQLite knowledge base...")
         relevant_docs = sqlite_kb.search(query=text, top_k=3)
         
-        # Build context
         context_parts = []
         for i, doc in enumerate(relevant_docs, 1):
             if doc['score'] > 0.4:
                 context_parts.append(f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}")
         
-        context = "\n\n".join(context_parts) if context_parts else "No se encontró información específica."
+        if context_parts:
+            context = "\n\n".join(context_parts)
+        else:
+            context = LEGAL_INFO
+            logger.info("📋 No hay documentos en la base; usando información legal precargada (LEGAL_INFO)")
         
         system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso. 
 Tu trabajo es responder preguntas sobre propiedad, posesión y saneamiento legal.
