@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone
 import asyncio
-from openai import AsyncOpenAI
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 import aiofiles
 import json
 import io
@@ -28,15 +28,12 @@ load_dotenv(ROOT_DIR / '.env')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# MongoDB connection (opcional - solo si está configurado)
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-db_name = os.environ.get('DB_NAME', 'prados_legal_hub')
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
-db = client[db_name]
+db = client[os.environ['DB_NAME']]
 
-# LLM Configuration (OpenAI)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-HEYGEN_API_KEY = os.environ.get('HEYGEN_API_KEY', '')
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
 
 # Initialize ElevenLabs client
@@ -50,14 +47,11 @@ if ELEVENLABS_API_KEY:
 
 # Import custom services
 from services.sqlite_knowledge import SQLiteKnowledgeBase
-from services.heygen_service import LiveAvatarService as LiveAvatarAPIService
 
 # Initialize SQLite Knowledge Base (reemplaza MongoDB)
 sqlite_kb = SQLiteKnowledgeBase()
-liveavatar_service = LiveAvatarAPIService()
 
 logger.info(f"✅ SQLite Knowledge Base initialized ({sqlite_kb.count_documents()} documents)")
-logger.info("✅ LiveAvatar Service initialized")
 
 
 # HeyGen Configuration
@@ -121,20 +115,6 @@ R: Decisión estratégica comercial. La posesión es un derecho reconocido y pro
 - Notaría Tambini
 - Casahierro Abogados
 """
-
-async def _generate_llm_response(system_prompt: str, user_text: str, model: str = "gpt-4o") -> str:
-    """Generate LLM response using OpenAI API."""
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=503, detail="LLM not configured (OPENAI_API_KEY)")
-    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text}
-        ]
-    )
-    return response.choices[0].message.content or ""
 
 # Models
 class User(BaseModel):
@@ -283,7 +263,14 @@ Información legal disponible:
 Responde de manera profesional, clara y precisa. Si no tienes información específica, 
 indica que el usuario debe consultar con el equipo legal.'''
         
-        ai_response = await _generate_llm_response(system_prompt, msg.content, model="gpt-4o")
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=msg.conversation_id,
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        user_message = UserMessage(text=msg.content)
+        ai_response = await chat.send_message(user_message)
         
         # Create assistant message
         assistant_msg = Message(
@@ -469,7 +456,7 @@ async def text_to_speech(request: dict):
             raise HTTPException(status_code=503, detail="ElevenLabs not configured")
         
         text = request.get('text', '')
-        if not text:
+        if not text or not text.strip():
             raise HTTPException(status_code=400, detail="Text is required")
         
         # Generate audio using ElevenLabs with streaming
@@ -516,7 +503,7 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not elevenlabs_client:
             raise HTTPException(status_code=503, detail="ElevenLabs not configured")
         
-        if not OPENAI_API_KEY:
+        if not EMERGENT_LLM_KEY:
             raise HTTPException(status_code=503, detail="LLM not configured")
         
         # Step 1: Transcribe audio to text using ElevenLabs STT
@@ -535,19 +522,39 @@ async def voice_chat(audio: UploadFile = File(...)):
         if not transcribed_text or len(transcribed_text.strip()) == 0:
             raise HTTPException(status_code=400, detail="No se pudo transcribir el audio. Intenta hablar más claro.")
         
-        # Step 2: Get AI response
-        logger.info("🤖 Generating AI response...")
-        system_prompt = f'''Eres un asistente legal experto en Prados de Paraíso. 
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
-
-Información legal disponible:
-{LEGAL_INFO}
-
-Responde de manera profesional, clara, concisa y precisa. Mantén las respuestas breves (máximo 3-4 frases) 
-ya que serán convertidas a voz. Si no tienes información específica, indica que el usuario debe consultar 
-con el equipo legal.'''
+        # Step 2: Get AI response with SQLite semantic search
+        logger.info("🔍 Searching in SQLite knowledge base...")
+        relevant_docs = sqlite_kb.search(query=transcribed_text, top_k=3)
         
-        ai_response = await _generate_llm_response(system_prompt, transcribed_text, model="gpt-4o")
+        # Build context
+        context_parts = []
+        for i, doc in enumerate(relevant_docs, 1):
+            if doc['score'] > 0.4:
+                context_parts.append(f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}")
+        
+        context = "\n\n".join(context_parts) if context_parts else "No se encontró información específica."
+        
+        logger.info("🤖 Generating AI response...")
+        system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso.
+
+CONTEXTO RELEVANTE:
+{context}
+
+INSTRUCCIONES:
+- Responde de manera profesional pero amigable
+- Usa solo la información del contexto
+- Sé MUY concisa (2-3 frases para audio)
+- Responde en español con acento argentino
+'''
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id="voice_chat_" + str(uuid.uuid4()),
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        user_message = UserMessage(text=transcribed_text)
+        ai_response = await chat.send_message(user_message)
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
         
         # Step 3: Convert AI response to speech
@@ -575,6 +582,7 @@ con el equipo legal.'''
         
         return {
             "transcribed_text": transcribed_text,
+            "response": ai_response,  # Campo requerido por frontend
             "ai_response": ai_response,
             "audio_url": f"data:audio/mpeg;base64,{audio_base64}",
             "format": "mp3"
@@ -596,7 +604,7 @@ async def text_chat(request: dict):
     3. Convert response to speech using ElevenLabs TTS (optional)
     '''
     try:
-        if not OPENAI_API_KEY:
+        if not EMERGENT_LLM_KEY:
             raise HTTPException(status_code=503, detail="LLM not configured")
         
         text = request.get('text', '').strip()
@@ -605,17 +613,39 @@ async def text_chat(request: dict):
         
         logger.info(f"💬 Text chat request: {text}")
         
-        # Get AI response
-        system_prompt = f'''Eres un asistente legal experto en Prados de Paraíso. 
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
-
-Información legal disponible:
-{LEGAL_INFO}
-
-Responde de manera profesional, clara y precisa. Si no tienes información específica, 
-indica que el usuario debe consultar con el equipo legal.'''
+        # Get AI response with SQLite semantic search
+        logger.info("🔍 Searching in SQLite knowledge base...")
+        relevant_docs = sqlite_kb.search(query=text, top_k=3)
         
-        ai_response = await _generate_llm_response(system_prompt, text, model="gpt-4o")
+        # Build context
+        context_parts = []
+        for i, doc in enumerate(relevant_docs, 1):
+            if doc['score'] > 0.4:
+                context_parts.append(f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}")
+        
+        context = "\n\n".join(context_parts) if context_parts else "No se encontró información específica."
+        
+        system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso. 
+Tu trabajo es responder preguntas sobre propiedad, posesión y saneamiento legal.
+
+CONTEXTO RELEVANTE:
+{context}
+
+INSTRUCCIONES:
+- Responde de manera profesional pero amigable
+- Usa solo la información del contexto
+- Sé concisa (máximo 4-5 frases para audio)
+- Responde en español con acento argentino
+'''
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id="text_chat_" + str(uuid.uuid4()),
+            system_message=system_prompt
+        ).with_model("openai", "gpt-4o")
+        
+        user_message = UserMessage(text=text)
+        ai_response = await chat.send_message(user_message)
         logger.info(f"✅ AI Response generated")
         
         # Optionally convert to speech if ElevenLabs is available
@@ -650,6 +680,7 @@ indica que el usuario debe consultar con el equipo legal.'''
         
         return {
             "user_text": text,
+            "response": ai_response,  # Campo requerido por frontend
             "ai_response": ai_response,
             "audio_url": audio_url,
             "format": "mp3" if audio_url else None
@@ -659,164 +690,6 @@ indica que el usuario debe consultar con el equipo legal.'''
         raise
     except Exception as e:
         logger.error(f"Error in text chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
-
-
-# HeyGen Streaming Avatar Endpoints
-@api_router.post("/heygen/streaming-token")
-async def create_heygen_streaming_token():
-    """
-    Generate a session token for HeyGen Streaming Avatar.
-    This token is used by the frontend SDK to establish a WebRTC connection.
-    """
-    try:
-        if not HEYGEN_API_KEY:
-            raise HTTPException(status_code=503, detail="HeyGen API key not configured")
-        
-        import httpx
-        
-        logger.info("🎬 Creating HeyGen streaming session token...")
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.heygen.com/v1/streaming.create_token",
-                headers={
-                    "x-api-key": HEYGEN_API_KEY,
-                    "Content-Type": "application/json"
-                },
-                timeout=10.0
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"❌ HeyGen token creation failed: {response.status_code} - {response.text}")
-                raise HTTPException(
-                    status_code=response.status_code, 
-                    detail=f"HeyGen API error: {response.text}"
-                )
-            
-            data = response.json()
-            token = data.get("data", {}).get("token")
-            
-            if not token:
-                logger.error(f"❌ No token in response: {data}")
-                raise HTTPException(status_code=500, detail="No token returned from HeyGen")
-            
-            logger.info("✅ HeyGen streaming token created successfully")
-            
-            return {
-                "token": token,
-                "avatar_id": HEYGEN_AVATAR_ID
-            }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error creating HeyGen token: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating streaming token: {str(e)}")
-
-
-# Voice Agent Endpoint (using ElevenLabs Agent voice and knowledge)
-@api_router.post("/voice-agent")
-async def voice_agent(audio: UploadFile = File(...), agent_id: str = Form(...)):
-    '''
-    Send audio to get response using the ElevenLabs Agent configured voice.
-    This endpoint:
-    1. Transcribes user audio (STT)
-    2. Gets agent configuration (voice, personality)
-    3. Generates response using agent knowledge base context
-    4. Converts to speech using agent voice (TTS)
-    '''
-    try:
-        if not elevenlabs_client:
-            raise HTTPException(status_code=503, detail="ElevenLabs not configured")
-        
-        if not OPENAI_API_KEY:
-            raise HTTPException(status_code=503, detail="LLM not configured")
-        
-        logger.info(f"🎙️ Processing voice with agent: {agent_id}")
-        
-        # Step 1: Transcribe audio
-        audio_content = await audio.read()
-        transcription_response = elevenlabs_client.speech_to_text.convert(
-            file=io.BytesIO(audio_content),
-            model_id="scribe_v1"
-        )
-        
-        transcribed_text = transcription_response.text if hasattr(transcription_response, 'text') else str(transcription_response)
-        logger.info(f"✅ Transcribed: {transcribed_text}")
-        
-        if not transcribed_text or len(transcribed_text.strip()) == 0:
-            raise HTTPException(status_code=400, detail="No se pudo transcribir el audio.")
-        
-        # Step 2: Get agent details to use the correct voice
-        agent_voice_id = "VmejBeYhbrcTPwDniox7"  # Lina - Latin American female voice
-        agent_name = "Doctor Prados de Paraiso"
-        
-        try:
-            # Try to get agent details to confirm voice
-            import httpx
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}",
-                    headers={"xi-api-key": ELEVENLABS_API_KEY},
-                    timeout=5.0
-                )
-                if response.status_code == 200:
-                    agent_data = response.json()
-                    if 'conversation_config' in agent_data:
-                        tts_config = agent_data.get('conversation_config', {}).get('tts', {})
-                        if 'voice_id' in tts_config:
-                            agent_voice_id = tts_config['voice_id']
-                            logger.info(f"✅ Using agent voice: {agent_voice_id}")
-                        agent_name = agent_data.get('name', agent_name)
-        except Exception as e:
-            logger.warning(f"⚠️ Could not fetch agent details: {str(e)}, using default Dr. Prados voice")
-        
-        # Step 3: Generate AI response using the knowledge base context
-        system_prompt = f'''Eres {agent_name}, un asistente legal experto especializado en Prados de Paraíso.
-Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento del proyecto.
-
-Información legal disponible:
-{LEGAL_INFO}
-
-Responde de manera profesional, clara, concisa y amigable como lo haría el Dr. Prados.
-Mantén las respuestas breves (máximo 3-4 frases) ya que serán convertidas a voz.'''
-        
-        ai_response = await _generate_llm_response(system_prompt, transcribed_text, model="gpt-4o")
-        logger.info(f"✅ AI Response generated")
-        
-        # Step 4: Convert to speech using agent's voice
-        audio_stream = elevenlabs_client.text_to_speech.stream(
-            text=ai_response,
-            voice_id=agent_voice_id,
-            model_id="eleven_multilingual_v2",
-            voice_settings=VoiceSettings(
-                stability=0.5,
-                similarity_boost=0.75,
-                style=0.0,
-                use_speaker_boost=True
-            )
-        )
-        
-        audio_bytes = b""
-        for chunk in audio_stream:
-            audio_bytes += chunk
-        
-        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-        logger.info("✅ Voice agent response completed")
-        
-        return {
-            "transcribed_text": transcribed_text,
-            "agent_response": ai_response,
-            "audio_url": f"data:audio/mpeg;base64,{audio_base64}",
-            "format": "mp3",
-            "voice_used": agent_voice_id
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error in voice agent: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
 
 
@@ -849,7 +722,14 @@ Información legal:
 
 Responde de manera profesional y clara.'''
             
-            ai_response = await _generate_llm_response(system_prompt, message_data['content'], model="gpt-4o")
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=conversation_id,
+                system_message=system_prompt
+            ).with_model("openai", "gpt-4o")
+            
+            user_message = UserMessage(text=message_data['content'])
+            ai_response = await chat.send_message(user_message)
             
             # Create assistant message
             assistant_msg = Message(
@@ -876,250 +756,6 @@ Responde de manera profesional y clara.'''
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
         await websocket.close()
-
-# ============================================================================
-# LIVE AVATAR ENDPOINTS
-# ============================================================================
-
-class ChatRequest(BaseModel):
-    """Request model for chat endpoint"""
-    message: str
-    conversation_id: Optional[str] = None
-
-@api_router.post("/liveavatar/session-token")
-async def get_liveavatar_token():
-    """
-    Generate LiveAvatar session token for frontend
-    """
-    try:
-        if not liveavatar_service:
-            raise HTTPException(status_code=503, detail="LiveAvatar service not initialized")
-        
-        token_data = await liveavatar_service.create_session_token()
-        
-        if not token_data:
-            raise HTTPException(status_code=500, detail="Failed to create LiveAvatar token")
-        
-        return token_data
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating LiveAvatar token: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-
-@api_router.get("/liveavatar/config")
-async def get_liveavatar_config():
-    """
-    Get LiveAvatar configuration
-    """
-    if not liveavatar_service:
-        raise HTTPException(status_code=503, detail="LiveAvatar service not initialized")
-    
-    return liveavatar_service.get_avatar_config()
-
-# ============================================================================
-# LIVEAVATAR API ENDPOINTS (FULL Mode con LiveKit)
-# ============================================================================
-
-class LiveAvatarSessionRequest(BaseModel):
-    """Request model for creating LiveAvatar session"""
-    include_context: bool = True
-
-@api_router.post("/liveavatar/create-session")
-async def create_liveavatar_session(request: LiveAvatarSessionRequest):
-    """
-    Crea una sesión de LiveAvatar en FULL Mode con LiveKit WebRTC
-    Cierra automáticamente sesiones anteriores para evitar límite de concurrencia.
-    
-    Returns:
-        Session token, room name y configuración de LiveKit
-    """
-    try:
-        if not liveavatar_service:
-            raise HTTPException(status_code=503, detail="LiveAvatar service not initialized")
-        
-        # Try to close any existing sessions first to avoid concurrent limit
-        try:
-            logger.info("🔄 Checking for existing sessions...")
-            existing_sessions = await liveavatar_service.list_sessions()
-            if existing_sessions and len(existing_sessions) > 0:
-                logger.warning(f"⚠️ Found {len(existing_sessions)} existing session(s), closing them...")
-                for session in existing_sessions:
-                    session_id = session.get('session_id')
-                    if session_id:
-                        await liveavatar_service.close_session(session_id)
-                        logger.info(f"✅ Closed session: {session_id}")
-                # Wait a moment for cleanup
-                await asyncio.sleep(1)
-        except Exception as cleanup_error:
-            logger.error(f"Error cleaning up sessions: {str(cleanup_error)}")
-            # Continue anyway
-        
-        # System prompt para Marianne (Asistente Legal)
-        context = None
-        if request.include_context:
-            context = '''Eres Marianne, la Asistente Legal IA de Prados de Paraíso.
-
-Tu rol es proporcionar información clara, precisa y profesional sobre temas de 
-propiedad, posesión legítima y saneamiento legal en Perú, basándote EXCLUSIVAMENTE 
-en la base de conocimientos proporcionada.
-
-Características de tu personalidad:
-- Profesional pero cercana y amable
-- Paciente y didáctica al explicar conceptos legales complejos
-- Hablas con acento argentino neutral
-- Usas lenguaje accesible sin perder precisión técnica
-
-IMPORTANTE:
-- Solo responde con información que esté en la base de conocimientos
-- Si no tienes información sobre algo, admítelo claramente
-- Sé concisa pero completa en tus respuestas
-- Responde siempre en español
-'''
-        
-        session_data = await liveavatar_service.create_session_token(context=context)
-        
-        return {
-            "success": True,
-            "session": session_data
-        }
-        
-    except Exception as e:
-        logger.error(f"Error creating LiveAvatar session: {str(e)}")
-        error_msg = str(e)
-        
-        # Provide user-friendly error messages
-        if "Concurrent limit" in error_msg:
-            error_msg = "Límite de sesiones alcanzado. Por favor recarga la página en unos segundos."
-        elif "avatar not found" in error_msg or "Avatar not found" in error_msg:
-            error_msg = "Avatar no disponible. Contacta al administrador para configurar un Avatar ID válido."
-        
-        raise HTTPException(status_code=500, detail=error_msg)
-
-class LiveAvatarContextRequest(BaseModel):
-    """Request model for sending knowledge context"""
-    room_name: str
-    context: str
-
-@api_router.post("/liveavatar/send-context")
-async def send_liveavatar_context(request: LiveAvatarContextRequest):
-    """
-    Envía contexto de la base de conocimientos a la sesión activa
-    """
-    try:
-        if not liveavatar_service:
-            raise HTTPException(status_code=503, detail="LiveAvatar service not initialized")
-        
-        result = await liveavatar_service.send_knowledge_context(
-            room_name=request.room_name,
-            context=request.context
-        )
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error sending context to LiveAvatar: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@api_router.delete("/liveavatar/close-session/{room_name}")
-async def close_liveavatar_session(room_name: str):
-    """
-    Cierra una sesión activa de LiveAvatar
-    """
-    try:
-        if not liveavatar_service:
-            raise HTTPException(status_code=503, detail="LiveAvatar service not initialized")
-        
-        success = await liveavatar_service.close_session(room_name)
-        
-        return {"success": success}
-        
-    except Exception as e:
-        logger.error(f"Error closing LiveAvatar session: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================================================================
-# CHAT WITH SEMANTIC SEARCH + LIVEAVATAR
-# ============================================================================
-
-@api_router.post("/chat")
-async def chat_with_knowledge_base(request: ChatRequest):
-    """
-    Chat endpoint with semantic search in SQLite knowledge base
-    
-    Flow:
-    1. Receive user message
-    2. Search relevant documents in SQLite (semantic search)
-    3. Generate response with LLM using retrieved context
-    4. Return response for LiveAvatar to speak
-    """
-    try:
-        user_message = request.message.strip()
-        if not user_message:
-            raise HTTPException(status_code=400, detail="Message cannot be empty")
-        
-        logger.info(f"💬 Chat request: {user_message[:100]}...")
-        
-        # Step 1: Semantic search in SQLite knowledge base
-        relevant_docs = sqlite_kb.search(query=user_message, top_k=3)
-        
-        # Step 2: Build context from retrieved documents
-        context_parts = []
-        for i, doc in enumerate(relevant_docs, 1):
-            if doc['score'] > 0.4:  # Solo incluir documentos relevantes
-                context_parts.append(
-                    f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}"
-                )
-        
-        context = "\n\n".join(context_parts) if context_parts else "No se encontró información específica en la base de conocimientos."
-        
-        # Step 3: Generate response with LLM
-        session_id = request.conversation_id or str(uuid.uuid4())
-        system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso, especializada en
-temas de propiedad, posesión legítima y saneamiento legal en Perú.
-
-Tu rol es proporcionar información clara, precisa y profesional basada EXCLUSIVAMENTE en la 
-base de conocimientos proporcionada.
-
-IMPORTANTE:
-- Solo responde con información que esté en la base de conocimientos
-- Si no tienes información sobre algo, admítelo claramente
-- Sé concisa pero completa en tus respuestas
-- Usa lenguaje profesional pero accesible y amigable
-- Responde en español con acento argentino neutral
-
-BASE DE CONOCIMIENTOS:
-{context}
-'''
-        ai_response = await _generate_llm_response(system_prompt, user_message, model="gpt-4o-mini")
-        
-        logger.info(f"✅ Generated response: {ai_response[:100]}...")
-        
-        # Step 4: Return response
-        return {
-            "message": user_message,
-            "response": ai_response,
-            "context_used": len(relevant_docs),
-            "sources": [
-                {
-                    "title": doc["titulo"],
-                    "relevance": round(doc["score"], 2)
-                }
-                for doc in relevant_docs
-            ],
-            "conversation_id": session_id
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
-
-# ============================================================================
-# END LIVE AVATAR ENDPOINTS
-# ============================================================================
 
 # Include all API routes
 app.include_router(api_router)
