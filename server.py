@@ -560,34 +560,46 @@ INSTRUCCIONES:
 - Responde en español con acento argentino
 '''
         
-        completion = await openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": transcribed_text}
-            ]
-        )
+        try:
+            completion = await openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": transcribed_text}
+                ]
+            )
+        except Exception as llm_err:
+            logger.warning(f"OpenAI LLM error: {llm_err}")
+            raise HTTPException(
+                status_code=502,
+                detail="El asistente no pudo responder ahora. Intentá de nuevo en un momento."
+            )
         ai_response = completion.choices[0].message.content
         logger.info(f"✅ AI Response: {ai_response[:100]}...")
         
         # Step 3: Convert AI response to speech
         logger.info("🔊 Converting response to speech...")
-        audio_stream = elevenlabs_client.text_to_speech.stream(
-            text=ai_response,
-            voice_id="VmejBeYhbrcTPwDniox7",  # Lina - Latin American female
-            model_id="eleven_multilingual_v2",
-            voice_settings=VoiceSettings(
-                stability=0.6,
-                similarity_boost=0.8,
-                style=0.0,
-                use_speaker_boost=True
+        try:
+            audio_stream = elevenlabs_client.text_to_speech.stream(
+                text=ai_response,
+                voice_id="VmejBeYhbrcTPwDniox7",  # Lina - Latin American female
+                model_id="eleven_multilingual_v2",
+                voice_settings=VoiceSettings(
+                    stability=0.6,
+                    similarity_boost=0.8,
+                    style=0.0,
+                    use_speaker_boost=True
+                )
             )
-        )
-        
-        # Collect audio bytes from stream
-        audio_bytes = b""
-        for chunk in audio_stream:
-            audio_bytes += chunk
+            audio_bytes = b""
+            for chunk in audio_stream:
+                audio_bytes += chunk
+        except Exception as tts_err:
+            logger.warning(f"ElevenLabs TTS error: {tts_err}")
+            raise HTTPException(
+                status_code=502,
+                detail="No se pudo generar el audio de respuesta. Intentá de nuevo."
+            )
         
         # Return base64 encoded audio
         audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
@@ -707,6 +719,51 @@ INSTRUCCIONES:
     except Exception as e:
         logger.error(f"Error in text chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error procesando consulta: {str(e)}")
+
+
+# Chat simple: solo texto entrante → respuesta (para LiveAvatar, HeyGenAvatar, etc.)
+@api_router.post("/chat")
+async def chat(request: dict):
+    '''
+    Acepta { "message": "..." } y devuelve { "response": "...", "context_used": [...] }.
+    Misma lógica que text-chat pero sin TTS. Usado por avatares y componentes que solo necesitan el texto.
+    '''
+    try:
+        if not openai_client:
+            raise HTTPException(status_code=503, detail="LLM no configurado (falta OPENAI_API_KEY)")
+        text = (request.get("message") or request.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Se requiere mensaje o texto")
+        logger.info(f"💬 Chat request: {text[:50]}...")
+        relevant_docs = sqlite_kb.search(query=text, top_k=3)
+        context_parts = []
+        for i, doc in enumerate(relevant_docs, 1):
+            if doc["score"] > 0.4:
+                context_parts.append(f"[Documento {i}] {doc['titulo']}\n{doc['contenido']}")
+        if context_parts:
+            context = "\n\n".join(context_parts)
+        else:
+            context = LEGAL_INFO
+            logger.info("📋 Sin documentos en base; usando LEGAL_INFO")
+        system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso.
+Responde preguntas sobre propiedad, posesión y saneamiento legal.
+CONTEXTO:
+{context}
+INSTRUCCIONES: Responde en español, profesional y conciso.'''
+        completion = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ]
+        )
+        ai_response = completion.choices[0].message.content
+        return {"response": ai_response, "context_used": [d.get("titulo") for d in relevant_docs if d.get("score", 0) > 0.4]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in /api/chat: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error al generar la respuesta")
 
 
 # WebSocket for real-time chat
