@@ -268,11 +268,10 @@ async def create_message_endpoint(msg: MessageCreate):
         system_prompt = f'''Eres un asistente legal experto en Prados de Paraíso. 
 Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesión y saneamiento.
 
-Información legal disponible:
+Información legal disponible (base de conocimientos):
 {LEGAL_INFO}
 
-Responde de manera profesional, clara y precisa. Si no tienes información específica, 
-indica que el usuario debe consultar con el equipo legal.'''
+Responde de forma profesional, clara y completa. Basa tu respuesta en la información anterior e incluye todos los detalles relevantes; da respuestas exhaustivas y bien desarrolladas. Si no tienes información específica, indica que el usuario debe consultar con el equipo legal.'''
         
         completion = await openai_client.chat.completions.create(
             model="gpt-4o",
@@ -550,14 +549,15 @@ async def voice_chat(audio: UploadFile = File(...)):
         logger.info("🤖 Generating AI response...")
         system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso.
 
-CONTEXTO RELEVANTE:
+CONTEXTO RELEVANTE (base de conocimientos):
 {context}
 
 INSTRUCCIONES:
-- Responde de manera profesional pero amigable
-- Usa solo la información del contexto
-- Sé MUY concisa (2-3 frases para audio)
-- Responde en español con acento argentino
+- Responde de forma profesional pero amigable.
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes que apliquen a la pregunta.
+- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales, diferencias (ej. propiedad vs posesión) y consecuencias cuando venga al caso.
+- Si el contexto incluye preguntas frecuentes o ejemplos, úsalos para enriquecer la respuesta.
+- Responde en español (acento argentino). Estructura la respuesta en párrafos o puntos si ayuda a clarificar.
 '''
         
         try:
@@ -656,14 +656,15 @@ async def text_chat(request: dict):
         system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso. 
 Tu trabajo es responder preguntas sobre propiedad, posesión y saneamiento legal.
 
-CONTEXTO RELEVANTE:
+CONTEXTO RELEVANTE (base de conocimientos):
 {context}
 
 INSTRUCCIONES:
-- Responde de manera profesional pero amigable
-- Usa solo la información del contexto
-- Sé concisa (máximo 4-5 frases para audio)
-- Responde en español con acento argentino
+- Responde de forma profesional pero amigable.
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes que apliquen a la pregunta.
+- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales, diferencias (ej. propiedad vs posesión) y consecuencias cuando venga al caso.
+- Si el contexto incluye preguntas frecuentes o ejemplos, úsalos para enriquecer la respuesta.
+- Responde en español (acento argentino). Estructura en párrafos o puntos si ayuda a clarificar.
 '''
         
         completion = await openai_client.chat.completions.create(
@@ -747,9 +748,14 @@ async def chat(request: dict):
             logger.info("📋 Sin documentos en base; usando LEGAL_INFO")
         system_prompt = f'''Eres Marianne, asistente legal experta de Prados de Paraíso.
 Responde preguntas sobre propiedad, posesión y saneamiento legal.
-CONTEXTO:
+
+CONTEXTO (base de conocimientos):
 {context}
-INSTRUCCIONES: Responde en español, profesional y conciso.'''
+
+INSTRUCCIONES:
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes.
+- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales y consecuencias cuando apliquen.
+- Responde en español, profesional. Estructura en párrafos o puntos si ayuda a clarificar.'''
         completion = await openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -793,10 +799,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: str):
             # Generate AI response
             system_prompt = f'''Eres un asistente legal experto en Prados de Paraíso.
 
-Información legal:
+Información legal (base de conocimientos):
 {LEGAL_INFO}
 
-Responde de manera profesional y clara.'''
+Responde de forma profesional y clara. Basa tu respuesta en la información anterior; da respuestas completas y exhaustivas, con todos los detalles relevantes.'''
             
             completion = await openai_client.chat.completions.create(
                 model="gpt-4o",
