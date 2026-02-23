@@ -271,7 +271,7 @@ Tu trabajo es responder preguntas sobre condiciones legales, propiedad, posesió
 Información legal disponible (base de conocimientos):
 {LEGAL_INFO}
 
-Responde de forma profesional, clara y completa. Basa tu respuesta en la información anterior e incluye todos los detalles relevantes; da respuestas exhaustivas y bien desarrolladas. Si no tienes información específica, indica que el usuario debe consultar con el equipo legal.'''
+Responde de forma profesional y clara. Basa tu respuesta en la información anterior; da respuestas completas pero no demasiado largas (1-2 párrafos o 4-6 frases con lo esencial). Si no tienes información específica, indica que el usuario debe consultar con el equipo legal.'''
         
         completion = await openai_client.chat.completions.create(
             model="gpt-4o",
@@ -554,10 +554,9 @@ CONTEXTO RELEVANTE (base de conocimientos):
 
 INSTRUCCIONES:
 - Responde de forma profesional pero amigable.
-- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes que apliquen a la pregunta.
-- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales, diferencias (ej. propiedad vs posesión) y consecuencias cuando venga al caso.
-- Si el contexto incluye preguntas frecuentes o ejemplos, úsalos para enriquecer la respuesta.
-- Responde en español (acento argentino). Estructura la respuesta en párrafos o puntos si ayuda a clarificar.
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior.
+- Da respuestas completas pero no demasiado largas: 1-2 párrafos o 4-6 frases con lo esencial (condiciones legales, diferencias clave si aplican). Evitá respuestas muy extensas.
+- Responde en español (acento argentino).
 '''
         
         try:
@@ -661,10 +660,9 @@ CONTEXTO RELEVANTE (base de conocimientos):
 
 INSTRUCCIONES:
 - Responde de forma profesional pero amigable.
-- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes que apliquen a la pregunta.
-- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales, diferencias (ej. propiedad vs posesión) y consecuencias cuando venga al caso.
-- Si el contexto incluye preguntas frecuentes o ejemplos, úsalos para enriquecer la respuesta.
-- Responde en español (acento argentino). Estructura en párrafos o puntos si ayuda a clarificar.
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior.
+- Da respuestas completas pero no demasiado largas: 1-2 párrafos o 4-6 frases con lo esencial (condiciones legales, diferencias clave si aplican). Evitá respuestas muy extensas.
+- Responde en español (acento argentino).
 '''
         
         completion = await openai_client.chat.completions.create(
@@ -753,9 +751,9 @@ CONTEXTO (base de conocimientos):
 {context}
 
 INSTRUCCIONES:
-- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior; incluye todos los detalles relevantes.
-- Da respuestas completas y exhaustivas: desarrolla las ideas, explica condiciones legales y consecuencias cuando apliquen.
-- Responde en español, profesional. Estructura en párrafos o puntos si ayuda a clarificar.'''
+- Basa tu respuesta ÚNICAMENTE en el CONTEXTO anterior.
+- Da respuestas completas pero no demasiado largas: 1-2 párrafos o 4-6 frases con lo esencial. Evitá respuestas muy extensas.
+- Responde en español, profesional.'''
         completion = await openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -802,7 +800,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: str):
 Información legal (base de conocimientos):
 {LEGAL_INFO}
 
-Responde de forma profesional y clara. Basa tu respuesta en la información anterior; da respuestas completas y exhaustivas, con todos los detalles relevantes.'''
+Responde de forma profesional y clara. Basa tu respuesta en la información anterior; respuestas completas pero no demasiado largas (1-2 párrafos con lo esencial).'''
             
             completion = await openai_client.chat.completions.create(
                 model="gpt-4o",
